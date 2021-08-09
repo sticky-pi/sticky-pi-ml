@@ -41,3 +41,12 @@ class MLBundle(BaseMLBundle):
 
         config.MODEL.DEVICE = device
         return config
+
+
+try:
+    from sticky_pi_ml.ml_bundle import BaseClientMLBundle
+
+    class ClientMLBundle(MLBundle, BaseClientMLBundle):
+        pass
+except ImportError:
+    pass

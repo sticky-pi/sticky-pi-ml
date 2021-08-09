@@ -1,13 +1,11 @@
+
+import io
 import json
 import os
 import cv2
-import pytz
 import datetime
 from xml.etree import ElementTree
 import numpy as np
-from sticky_pi_ml.annotations import Annotation, DictAnnotation
-# from sticky_pi.tools import device_datetime_from_filename
-import re
 from ast import literal_eval
 import logging
 import tempfile
@@ -16,74 +14,166 @@ import PIL
 import PIL.Image
 import PIL.ExifTags
 import shutil
-import ffmpeg
 from cairosvg import svg2png
 import svgpathtools
+from typing import Union
+import pandas as pd
+import requests
 
-from sticky_pi_client.image_parser import ImageParser
-from sticky_pi_client.utils import md5
-
-def wrapper_make_png(x):
-    tmp_dir,i, im, show_datetime, scale = x
-    path_ = os.path.join(tmp_dir, "%05d.png" % i)
-    im.to_png(path_, show_datetime=show_datetime, scale=scale)
+from sticky_pi_ml.utils import datetime_to_string, string_to_datetime
+from sticky_pi_ml.annotations import Annotation, DictAnnotation
+from sticky_pi_ml.utils import md5
 
 
-class ImageSequence(object):
-    def __init__(self, images):
-        self._images = images
+class ImageSeries(list):
+    def __init__(self, device: str, start_datetime: Union[str, datetime.datetime],
+                 end_datetime: Union[str, datetime.datetime]):
+        super().__init__()
+        self._device = device
 
-    def to_animation(self, target, show_datetime=False, scale=1, n_threads=1):
-        tmp_dir = tempfile.mkdtemp(prefix='sticky_pi_')
-        try:
-            jobs = []
-            for i, im in enumerate(self._images):
-                jobs.append((tmp_dir, i, im, show_datetime, scale))
-            if n_threads == 1:
-                for j in jobs:
-                    wrapper_make_png(j)
+        if not isinstance(start_datetime, datetime.datetime):
+            start_datetime = string_to_datetime(start_datetime)
 
+        if not isinstance(end_datetime, datetime.datetime):
+            end_datetime = string_to_datetime(end_datetime)
+
+        self._start_datetime = start_datetime
+        self._end_datetime = end_datetime
+        self._info_dict = {'device': self._device,
+                           'start_datetime': self._start_datetime,
+                           'end_datetime': self._end_datetime}
+
+    def __repr__(self):
+        return self.name
+
+    @property
+    def info_dict(self):
+        return self._info_dict
+
+    @property
+    def start_datetime(self):
+        return self._start_datetime
+
+    @property
+    def end_datetime(self):
+        return self._end_datetime
+
+    @property
+    def name(self):
+        return "%s.%s.%s" % (self._device,
+                             datetime_to_string(self._start_datetime),
+                             datetime_to_string(self._end_datetime))
+
+    def populate_from_client(self, client, cache_image_dir=None):
+        from sticky_pi_api.client import BaseClient
+        assert isinstance(client, BaseClient)
+
+        client_resp = client.get_images_with_uid_annotations_series([self._info_dict],
+                                                                    what_annotation='data',
+                                                                    what_image='image')
+        df = pd.DataFrame(client_resp)
+        if len(df) == 0:
+            logging.warning('No image for %s' % self._info_dict)
+            return
+
+        if 'algo_name' not in df.columns:
+            logging.info('No annotations for the requested images. Fetching all!')
+            df['algo_version'] = None
+            df['algo_name'] = ""
+
+        df = df.sort_values(by=['algo_version', 'datetime'])
+        df = df.drop_duplicates(subset=['id'], keep='last')
+        logging.info(f'{len(df)} Images matching')
+
+        annotated_images = []
+        if not "json" in df.columns:
+            logging.warning('No annotations')
+            return annotated_images
+
+        logging.info(f'{sum([0 if j is None else 1 for j in df.json])} annotations')
+        for _, r in df.iterrows():
+            r_dict = r.to_dict()
+            if not r_dict['json']:
+                continue
+            if not os.path.isfile(r_dict['url']):
+                if cache_image_dir is None or not os.path.isdir(cache_image_dir):
+                    raise FileNotFoundError(f'The requested image appears to be a remote url: {r["url"]}.'
+                                            f'For this type of resource, a valid cache image directory is needed!')
+
+                filename = os.path.basename(r_dict['url']).split('?')[0]
+                logging.info(f'Downloading {filename}')
+                target = os.path.join(cache_image_dir, filename)
+                if os.path.isfile(target):
+                    local_md5 = md5(target)
+                else:
+                    local_md5 = None
+
+                if r_dict['md5'] != local_md5:
+                    resp = requests.get(r_dict['url']).content
+                    with open(target, 'wb') as file:
+                        file.write(resp)
+
+                local_url = os.path.join(cache_image_dir, filename)
             else:
-                from multiprocessing.pool import Pool
-                with Pool(n_threads) as p:
-                    p.map(wrapper_make_png,jobs)
+                local_url = r_dict['url']
 
-            # overwrite_output=True does not seem to work and prompt for a quiet answer?
-            if os.path.isfile(target):
-                os.remove(target)
+            im = ImageJsonAnnotations(local_url, json_str=r_dict['json'])
+            annotated_images.append(im)
 
-            (
-                ffmpeg.input(os.path.join(tmp_dir,"%05d.png"))
-                # .filter('fps', fps=1, round='up')
-                .output(target)
-                .run(quiet=True, overwrite_output=True)
-            )
-        finally:
-            shutil.rmtree(tmp_dir)
+        self.clear()
+        for im in sorted(annotated_images, key=lambda x: x.datetime):
+            self.append(im)
 
 
-class Image(ImageParser):
-    def __init__(self, path):
+class Image(object):
+    def __init__(self, path: str):
         self._path = path
         self._filename = os.path.basename(path)
-        super().__init__(path)
-        self._md5 = self['md5']
-        self._datetime = self['datetime']
-        self._device = self['device']
+        self._md5 = None
+        file_info = self._device_datetime_info(self._filename)
+        self._datetime = file_info['datetime']
+        self._device = file_info['device']
         self._annotations = []
         self._metadata = None
         self._shape = None
         self._cached_image = None
 
-    def _parse(self, file):
-        self.update(self._device_datetime_info(file.name))
-        self['md5'] = md5(file)
+    def __repr__(self):
+        return "%s: %s.%s" % (self.__class__, self._device, self.datetime_str)
+
+    def __str__(self):
+        return self.__repr__()
+
+    def _device_datetime_info(self, filename: str):
+        fields = filename.split('.')
+
+        if len(fields) != 3:
+            raise Exception("Wrong file name, three dot-separated fields expected")
+
+        device = fields[0]
+        try:
+            if len(device) != 8:
+                raise ValueError()
+            int(device, base=16)
+        except ValueError:
+            raise Exception("Invalid device name field in file: %s" % device)
+
+        datetime_string = fields[1]
+        try:
+            date_time = datetime.datetime.strptime(datetime_string, '%Y-%m-%d_%H-%M-%S')
+            # date_time = self._timezone.localize(date_time)
+        except ValueError:
+            raise Exception("Could not retrieve datetime from filename")
+
+        return {'device': device,
+                'datetime': date_time,
+                'filename': filename}
 
     # when automatically annotating an image, we can tag the version
     @property
-    def auto_annotator_version(self):
+    def algo_version(self):
         try:
-            return self._metadata['auto_annotator_version']
+            return self._metadata['algo_version']
         except KeyError:
             logging.warning('No detector version')
             return None
@@ -91,20 +181,21 @@ class Image(ImageParser):
     def tag_detector_version(self, name, version):
         # we force metadata parsing if it was not
         _ = self.metadata
+        self._metadata['md5'] = self.md5
+        self._metadata.update(self._device_datetime_info(self._filename))
+        self._metadata['algo_name'] = name
+        self._metadata['algo_version'] = version
 
-        self._metadata['auto_annotator_name'] = name
-        self._metadata['auto_annotator_version'] = version
-
-    def json_annotations(self, as_json=True):
+    def annotation_dict(self, as_json: bool = True):
         try:
-            meta_to_pass = {'auto_annotator_name': self.metadata['auto_annotator_name'],
-                            'auto_annotator_version': self.metadata['auto_annotator_version']}
+            metadata_to_pass = {k: self._metadata[k] for k in
+                                ['device', 'datetime', 'algo_name', 'algo_version', 'md5']}
+
         except KeyError:
             meta_to_pass = {}
 
         out = {'annotations': [a.to_dict() for a in self._annotations],
-               'metadata': meta_to_pass
-            }
+               'metadata': metadata_to_pass}
         if as_json:
             out = json.dumps(out)
         return out
@@ -115,6 +206,8 @@ class Image(ImageParser):
 
     @property
     def md5(self):
+        if self._md5 is None:
+            self._md5 = md5(self._path)
         return self._md5
 
     @property
@@ -147,13 +240,13 @@ class Image(ImageParser):
     def filename(self):
         return self._filename
 
-    def clear_cache(self, clear_annot_cached_conv = True):
+    def clear_cache(self, clear_annot_cached_conv=True):
         self._cached_image = None
-        if clear_annot_cached_conv :
+        if clear_annot_cached_conv:
             for a in self._annotations:
                 a.clear_cached_conv()
 
-    def read(self, cache = False):
+    def read(self, cache=False):
         if self._cached_image is None:
             im = self._get_array()
         else:
@@ -166,25 +259,34 @@ class Image(ImageParser):
         return im
 
     def _get_array(self):
-        return cv2.imread(self._path)
+        out = cv2.imread(self._path)
+        if out is None:
+            raise Exception('Could not read image file %s' % self._path)
+        return out
 
     @property
     def metadata(self):
-
         if self._metadata is None:
-            with PIL.Image.open(self._path) as img:
-                self._metadata = {
-                    PIL.ExifTags.TAGS[k]: v
-                    for k, v in img._getexif().items()
-                    if k in PIL.ExifTags.TAGS
-                }
-
-            try:
-                self._metadata['Make'] = literal_eval(self._metadata['Make'])
-            except ValueError as e:
-                logging.warning('Missing custom metadata in %s, Make is `%s`' % (self._path, self._metadata['Make']))
-
+            self._metadata = self._decode_metadata()
         return self._metadata
+
+    def _decode_metadata(self):
+        with PIL.Image.open(self._path) as img:
+            out = {
+                PIL.ExifTags.TAGS[k]: v
+                for k, v in img._getexif().items()
+                if k in PIL.ExifTags.TAGS
+            }
+            # cast to float for compatibility
+            for k, v in out.items():
+                if isinstance(v, PIL.TiffImagePlugin.IFDRational):
+                    out[k] = float(v)
+
+        try:
+            out['Make'] = literal_eval(out['Make'])
+        except ValueError as e:
+            logging.warning('Missing custom metadata in %s, Make is `%s`' % (self._path, out['Make']))
+        return out
 
     def _img_buffer(self):
         with open(self._path, "rb") as image_file:
@@ -199,6 +301,7 @@ class Image(ImageParser):
         try:
             height, width = self.read().shape[0:2]
             if include_metadata:
+                meta = self.metadata
                 desc = 'desc="' + str(self.metadata) + '"'
 
             else:
@@ -259,9 +362,9 @@ class Image(ImageParser):
     #
     #     filename = os.path.basename(path)
     #     device, date_time = device_datetime_from_filename(filename)
-        #
-        # return {'device': device,
-        #         'datetime': date_time}
+    #
+    # return {'device': device,
+    #         'datetime': date_time}
 
 
 class SVGImage(Image):
@@ -277,8 +380,6 @@ class SVGImage(Image):
 
         self.update(self._device_datetime_info(self._filename))
         self['md5'] = md5(self.extract_jpeg(as_buffer=True))
-
-
 
     def _img_buffer(self):
         encoded_string = base64.b64encode(self.extract_jpeg(as_buffer=True).read())
@@ -317,14 +418,14 @@ class SVGImage(Image):
         elif 'width' in attrs:
             im_w = ims[0].attrib['width']
         else:
-            raise Exception('Embedded image %s does not have width' % (self._path))
+            raise Exception('Embedded image %s does not have width' % self._path)
 
         if 'h' in attrs:
             im_h = ims[0].attrib['h']
         elif 'width' in attrs:
             im_h = ims[0].attrib['height']
         else:
-            raise Exception('Embedded image %s does not have height' % (self._path))
+            raise Exception('Embedded image %s does not have height' % self._path)
 
         svg_im_shape = (int(im_h), int(im_w))
         jpg_im_shape = self._get_array().shape
@@ -348,8 +449,11 @@ class SVGImage(Image):
 
         try:
             self._metadata = literal_eval(str)
-        except ValueError:
+
+        except ValueError as e:
             logging.error('Cannot parse metadata is %s. String was is `%s`' % (self._path, self._metadata))
+            logging.error(e)
+
         if not isinstance(self._metadata['Make'], dict):
             logging.warning('Missing custom metadata in %s, Make is `%s`' % (self._path, self._metadata['Make']))
 
@@ -369,8 +473,7 @@ class SVGImage(Image):
                 sub_paths.append(svgpathtools.Path())
             sub_paths[-1].append(i)
             last_end = i.end
-        # print(path)
-        # print(sub_paths)
+
         out = []
         for sp in sub_paths:
             arr = np.array([s.poly()(tvals) for s in sp])
@@ -379,12 +482,13 @@ class SVGImage(Image):
 
             # these should be ~ 0 as previous points end where following start
 
-            sum_magnitude = np.sum(np.abs( starts - ends))
+            sum_magnitude = np.sum(np.abs(starts - ends))
             # sometimes, we have small numerical difference (1e-16) or so
             if sum_magnitude > 1e-3:
                 raise Exception('SVG path interrupted %s' % str(path))
-            flat = arr[:, 0:n_point_per_segment-1].flatten()
-            ctr = np.round(np.array([[flat.real / self._scale_in_svg[0], flat.imag / self._scale_in_svg[1]]])).astype(int)
+            flat = arr[:, 0:n_point_per_segment - 1].flatten()
+            ctr = np.round(np.array([[flat.real / self._scale_in_svg[0], flat.imag / self._scale_in_svg[1]]])).astype(
+                int)
             ctr = ctr.transpose((2, 0, 1))
             # ignore contours that do not have 3 points
             if ctr.shape[0] > 2:
@@ -393,8 +497,7 @@ class SVGImage(Image):
                 logging.warning("polygon with only %i points in %s: %s" % (ctr.shape[0], self._path, str(p.attrib)))
         return out
 
-    @property
-    def metadata(self):
+    def _decode_metadata(self):
         return self._metadata
 
     def _get_array(self):
@@ -410,13 +513,11 @@ class SVGImage(Image):
             raise Exception("Cannot extract image from %s" % target)
         return self._extract_jpeg_id(ims, 0, target, as_buffer)
 
-
-    def _extract_jpeg_id(self, ims, id=0, target=None, as_buffer = False):
+    def _extract_jpeg_id(self, ims, id=0, target=None, as_buffer=False):
         utf_str = ims[id].attrib['{http://www.w3.org/1999/xlink}href'].split(',')[1]
         utf_str = utf_str.strip('\"\'')
 
         if as_buffer:
-            import io
             buffer = io.BytesIO()
             buffer.write(base64.b64decode(utf_str))
             buffer.seek(0)
@@ -427,16 +528,17 @@ class SVGImage(Image):
 
 
 class ArrayImage(Image):
-    def __init__(self, array, device, datatime):
+    def __init__(self, array, device, datetime):
         self._array = array
         self._device = device
-        self._datetime = datatime
+        self._datetime = datetime
         self._path = None
         self._filename = None
         self._annotations = []
         self._metadata = {}
         self._shape = None
         self._cached_image = None
+        self._md5 = None
 
     def filename(self):
         raise NotImplementedError
@@ -446,15 +548,45 @@ class ArrayImage(Image):
         return self._array
 
 
+class BufferImage(Image):
+    def __init__(self, buffer, device, datetime):
+        self._buffer = buffer
+        self._array = None
+        self._device = device
+        self._datetime = datetime
+        self._path = None
+        self._filename = None
+        self._annotations = []
+        self._metadata = {}
+        self._shape = None
+        self._cached_image = None
+        self._md5 = None
+
+    def filename(self):
+        raise NotImplementedError
+
+    def read(self, cache=True):
+        if self._array is not None:
+            return self._array
+        self._buffer.seek(0)
+        bytes_as_np_array = np.frombuffer(self._buffer.read(), dtype=np.uint8)
+        array = cv2.imdecode(bytes_as_np_array, cv2.IMREAD_COLOR)
+
+        if cache:
+            self._array = array
+        self._shape = array.shape
+        return array
+
+
 class ImageJsonAnnotations(Image):
-    def __init__(self, path, json_str = None,  json_path=None):
+    def __init__(self, path, json_str=None, json_path=None):
         super().__init__(path)
         if json_path is None and json_str is None:
             raise Exception("json must be provided, either as a string or path")
 
         if json_path is not None:
             assert os.path.isfile(json_path)
-            dic = json.load(open(json_path,'r'))
+            dic = json.load(open(json_path, 'r'))
         elif json_str is not None:
             dic = json.loads(json_str)
         else:
@@ -466,5 +598,3 @@ class ImageJsonAnnotations(Image):
 
         for ad in annot_dic_list:
             self._annotations.append(DictAnnotation(ad, parent_image=self))
-
-

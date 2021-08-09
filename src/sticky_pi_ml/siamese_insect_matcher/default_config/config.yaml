@@ -1,0 +1,21 @@
+IMS_PER_BATCH: 32
+
+CHECKPOINT_PERIOD: 100
+SIAM_ROUNDS: 300
+SIAM_BASE_LR:  0.00002
+
+DIST_AR_ROUNDS: 300
+DIST_AR_BASE_LR:  0.05
+
+FINAL_ROUNDS: 500
+FINAL_BASE_LR:  0.00002
+
+
+
+# LR multiplies by gamma each ROUND
+GAMMA: 0.999
+LR_MOMENTUM: 0.90
+N_WORKERS: 16
+
+# Matching score is 0 for any pair if their delta timestamp is greater than this parameter, in second (12h by default)
+MAX_DELTA_T_TO_MATCH: 43200

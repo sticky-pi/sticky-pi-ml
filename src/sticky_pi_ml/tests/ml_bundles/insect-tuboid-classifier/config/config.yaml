@@ -1,0 +1,24 @@
+IMS_PER_BATCH: 8
+N_WORKERS: 8
+BASE_LR: 0.002
+LR_MOMENTUM: 0.90
+N_ROUNDS: 2
+GAMMA: 0.999
+CHECKPOINT_PERIOD: 8
+
+LABELS:
+  - ['^Background.*', 0]
+  - ['^Ambiguous.*', 1]
+  - ['^Insecta\.Hemiptera\.Cicadellidae\.Edwardsiana.*', null]
+  - ['^Insecta\.Diptera\.Drosophilidae\.Drosophila\.Drosophila suzukii.*', null]
+  - ['^Insecta\.Diptera\.Drosophilidae.*', null]
+  - ['^Insecta\.Diptera\.Psychodidae.*', null]
+  - ['^Insecta\.Diptera\.Culicidae.*', null]
+  - ['^Insecta\.Diptera\.Muscidae.*',null]
+  - ['^Insecta\.Diptera\.Sciaridae.*', null]
+  - ['^Insecta\.Coleoptera\.Curculionidae.*',null]
+  - ['^Insecta\.Coleoptera\.Coccinellidae.*',null]
+  - ['^Insecta\.Coleoptera.*',null]
+  - ['^Insecta\.Hymenoptera\.Figitidae.*', null]
+  - ['^Insecta\.Hymenoptera.*',null]
+  - ['^Insecta.*',2]

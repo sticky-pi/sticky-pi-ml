@@ -130,4 +130,6 @@ dmypy.json
 _build/
 
 .idea/
-
+*.secret*
+*.out
+*.mp4

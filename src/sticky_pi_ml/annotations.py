@@ -54,12 +54,15 @@ class Annotation(object):
         return width
 
 
-    def subimage(self, masked=False, mask_in_alpha = False, cache_parent_image = True, source_image=None):
+    def subimage(self, masked=False,
+                 mask_in_alpha=False,
+                 cache_parent_image=True,
+                 source_array: np.array = None):
         x, y, w, h = self._bbox
-        if source_image is None:
+        if source_array is None:
             pim = self.parent_image_array(cache=cache_parent_image)
         else:
-            pim = source_image
+            pim = source_array
 
         h = min(pim.shape[0], y + h) - max(0, y)
         w = min(pim.shape[1], x + w) - max(0, x)
@@ -71,15 +74,15 @@ class Annotation(object):
 
 
         if masked or mask_in_alpha:
-            mask = np.zeros((h,w), dtype=np.uint8)
-            cv2.drawContours(mask, [self._contour], 0, color = 255, thickness= -1, lineType=cv2.LINE_8, offset= (-x, -y))
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.drawContours(mask, [self._contour], 0, color = 255, thickness= -1,
+                             lineType=cv2.LINE_8, offset=(-x, -y))
 
             if not mask_in_alpha:
                 array_copy = cv2.bitwise_and(array_copy, array_copy, mask=mask)
             else:
-                # mask = cv2.cvtColor(mask,cv2.COLOR_GRAY2BGR)
                 mask = mask.reshape((h, w, 1))
-                array_copy = np.concatenate([array_copy, mask],2)
+                array_copy = np.concatenate([array_copy, mask], 2)
         return array_copy
 
     def parent_image_array(self, cache=False):
