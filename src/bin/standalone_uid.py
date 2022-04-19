@@ -29,7 +29,7 @@ if __name__ == '__main__':
     args_parse.add_argument("-D", "--debug", dest="debug", default=False,
                       help="debug",
                       action="store_true")
-    args_parse.add_argument("-g", "--gpu", dest="gpu", default=False, help="Whther to use GPU/Cuda", action="store_true")
+    args_parse.add_argument("-g", "--gpu", dest="gpu", default=False, help="Whether to use GPU/Cuda", action="store_true")
 
     # predict specific
     args_parse.add_argument("-t", "--target", dest="target")
@@ -40,7 +40,6 @@ if __name__ == '__main__':
 
     # training specific
     args_parse.add_argument("-r", "--restart-training", dest="restart_training", default=False, action="store_true")
-
 
     args = args_parse.parse_args()
     option_dict = vars(args)
@@ -53,9 +52,10 @@ if __name__ == '__main__':
                             datefmt='%Y-%m-%d %H:%M:%S',
                             level=logging.INFO)
 
-    if not option_dict["bundle_dir"]:
+    if not option_dict["bundle_dir"] and not option_dict["de_novo"]:
         raise ValueError("--bundle-dir (-b) not defined")
-    if not os.path.isdir(option_dict["bundle_dir"]):
+
+    if not option_dict["de_novo"] and not os.path.isdir(option_dict["bundle_dir"]):
         raise ValueError(f"--bundle-dir refers to a directory that does NOT exist: {option_dict['bundle_dir']}")
     if option_dict["gpu"]:
         device = "cuda"
@@ -65,7 +65,8 @@ if __name__ == '__main__':
     if option_dict['action'] not in valid_actions:
         raise ValueError(f"Unexpected action{option_dict['action']}. Valid actions are:{str(valid_actions)}")
 
-    bundle = MLBundle(option_dict["bundle_dir"], device=device)
+    if not option_dict["de_novo"]:
+        bundle = MLBundle(option_dict["bundle_dir"], device=device)
 
     if option_dict['action'] == 'predict_dir':
         if not option_dict["target"]:
@@ -74,7 +75,9 @@ if __name__ == '__main__':
         if not os.path.isdir(option_dict['target']):
             raise ValueError(f"Target directory does not exist: {option_dict['target']}")
         # fixme (could be a other formats/patterns)
-        pred = Predictor(bundle)
+        if not option_dict["de_novo"]:
+            pred = Predictor(bundle)
+
         valid_imgs = sorted(glob.glob(os.path.join(option_dict['target'], "**", "*.jpg"), recursive=True))
         assert len(valid_imgs) > 0, f"No image found in {option_dict['target']}"
         logging.info(f"Found {len(valid_imgs)} images")

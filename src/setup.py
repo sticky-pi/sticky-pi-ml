@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-exec(open('sticky_pi_ml/_version.py').read())
+__version__ = "2.0.0"
 
 setup(
     name='sticky_pi_ml',
@@ -8,10 +8,13 @@ setup(
     long_description=__doc__,
     packages=find_packages(),
     scripts=['bin/universal_insect_detector.py',
-             'bin/standalone_uid.py',
              'bin/siamese_insect_matcher.py',
+             'bin/insect_tuboid_classifier.py',
+             'bin/standalone_uid.py',
              'bin/standalone_sim.py',
-             'bin/insect_tuboid_classifier.py'],
+             'bin/standalone_itc.py',
+
+             ],
     include_package_data=True,
     zip_safe=False,
     install_requires=[
@@ -36,3 +39,6 @@ setup(
     },
     test_suite='nose.collector'
 )
+
+exec(open('sticky_pi_ml/_version.py').read())
+

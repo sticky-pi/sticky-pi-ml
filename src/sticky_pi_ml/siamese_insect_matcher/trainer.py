@@ -63,8 +63,9 @@ class Trainer(BaseTrainer):
 
         running_loss = None
         round = 0
-
+        logging.info('Starting initial validation')
         val_accuracy, val_loss = self._validation_loss(val_loader)
+        logging.info('Starting training')
 
         while True:
             for i, (data, labels) in enumerate(train_loader, 0):
@@ -118,6 +119,8 @@ class Trainer(BaseTrainer):
 
     def validate(self, predictor: Predictor, out_dir: str = None):
 
+        os.makedirs(out_dir, exist_ok=True)
+
         dl = self._ml_bundle.dataset.get_torch_data_loader('val', shuffle=False)
         out = []
         tp, tn, fp, fn = 0, 0, 0, 0
@@ -149,5 +152,5 @@ class Trainer(BaseTrainer):
                 recall = "NaN"
             logging.info(f"Validation: {i+1} / {len(dl)}; specificity: {specificity}; recall: {recall}; N_total: {tn + fp + tp + fn}")
 
-        with open(os.path.join(out_dir, 'result.json'), 'w') as file:
+        with open(os.path.join(out_dir, 'results.json'), 'w') as file:
             file.write(json.dumps(out))

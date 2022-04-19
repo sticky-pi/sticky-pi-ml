@@ -38,7 +38,7 @@ class Matcher(object):
             cache_image_dir = os.path.join(temp_dir, "cache_images")
             os.makedirs(cache_image_dir)
             already_present_tuboids = pd.DataFrame(client.get_tiled_tuboid_series([annotated_images_series.info_dict]))
-            if 'algo_version' in already_present_tuboids.columns:
+            if 'algo_version_series' in already_present_tuboids.columns:
                 same_algo_tuboids = already_present_tuboids[
                     already_present_tuboids.algo_version_series == self._ml_bundle.version]
                 n_same_algo = len(same_algo_tuboids)
@@ -46,6 +46,7 @@ class Matcher(object):
                     expected_n_same_algo = same_algo_tuboids.iloc[0].n_tuboids_series
                     if expected_n_same_algo != n_same_algo:
                         logging.error(f"Upstream tuboid series partially uploaded: expected {expected_n_same_algo}, but only contains {n_same_algo}")
+                        #
                         return
                     else:
                         logging.info('Series %s already been analysed by the same algorithm, and is complete.'

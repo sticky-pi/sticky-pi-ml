@@ -4,23 +4,13 @@ import logging
 import os
 import glob
 
-from sticky_pi_ml.siamese_insect_matcher.ml_bundle import MLBundle
-from sticky_pi_ml.siamese_insect_matcher.trainer import Trainer
-from sticky_pi_ml.siamese_insect_matcher.predictor import Predictor
-from sticky_pi_ml.siamese_insect_matcher.matcher import Matcher
-from sticky_pi_ml.siamese_insect_matcher.siam_svg import SiamSVG
-from sticky_pi_ml.image import SVGImage
-from sticky_pi_ml.tuboid import Tuboid, TiledTuboid
+from sticky_pi_ml.insect_tuboid_classifier.ml_bundle import MLBundle
+from sticky_pi_ml.insect_tuboid_classifier.trainer import Trainer
+from sticky_pi_ml.insect_tuboid_classifier.predictor import Predictor
 
 
-from sticky_pi_ml.image import ImageSeriesSVGDir
 
-
-TUBOID_DIR_NAME = "tuboids"
-CANDIDATES_DIR_NAME = "candidates"
-
-valid_actions = {"predict_dir", "candidates", 'train', 'validate'}
-
+valid_actions = {"predict_dir", "train", 'validate'}
 if __name__ == '__main__':
     args_parse = argparse.ArgumentParser()
     args_parse.add_argument("action", help=str(valid_actions))
