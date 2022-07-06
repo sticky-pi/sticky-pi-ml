@@ -52,41 +52,23 @@ class Predictor(BasePredictor):
         if info is None:
             info = [{'device': '%',
                      'start_datetime': "1970-01-01_00-00-00",
-                     'end_datetime': "2070-01-01_00-00-00"}]
+                     'end_datetime': "2070-01-01_00-00-00",
+                     "algo_name": self.name,
+                     "algo_version": self.version}]
             logging.info('No info provided. Fetching all annotations')
+
+        logging.info(f"Info for `get_images_to_annotate`: {info}")
         while True:
-            client_resp = client.get_images_with_uid_annotations_series(info, what_image='metadata',
-                                                                        what_annotation='metadata')
+            client_resp = client.get_images_to_annotate(info, what='image')
 
             if len(client_resp) == 0:
                 return
+            #
+            # df = pd.DataFrame(client_resp)
 
-            df = pd.DataFrame(client_resp)
-
-            if 'algo_name' not in df.columns:
-                logging.info('No annotations for the requested images. Fetching all!')
-                df['algo_version'] = None
-                df['algo_name'] = ""
-
-            df = df.sort_values(by=['algo_version', 'datetime'])
-            df = df.drop_duplicates(subset=['id'], keep='last')
-
-            # here, we filter/sort df to keep only images that are not annotated by this version.
-            # we sort by version tag
-
-            conditions = (self.version > df.algo_version) | \
-                         (df.algo_version.isnull()) | \
-                         (self.name != df.algo_name)
-
-            df = df[conditions]
-            if len(df) == 0:
-                logging.info('All annotations uploaded!')
-                return
-
-            query = [df.iloc[i][['device', 'datetime']].to_dict() for i in
-                     range(min(len(df), self._detect_client_chunk_size))]
-            image_data = client.get_images(info=query, what='image')
-            urls = [im['url'] for im in image_data]
+            # query = [df.iloc[i][['device', 'datetime']].to_dict() for i in range(len(df))]
+            # image_data = client.get_images(info=query, what='image')
+            urls = [im['url'] for im in client_resp]
 
             all_annots = []
             for u in urls:

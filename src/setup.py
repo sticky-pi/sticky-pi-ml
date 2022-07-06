@@ -21,7 +21,6 @@ setup(
         'python-dotenv',
         'numpy',
         'pandas',
-        'futures',
         'ffmpeg-python',
         'svgpathtools',
         'CairoSVG',
